@@ -1,0 +1,6 @@
+.next
+node_modules
+.env*
+.git
+docker_stream_aws_plan.md
+aws_deployment.md
