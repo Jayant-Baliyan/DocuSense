@@ -98,15 +98,11 @@ export default function FileDropzone({ onFileSelect, selectedFile }: FileDropzon
           </p>
           <button
             type="button"
+            className="secondary-btn"
             style={{
               marginTop: '0.5rem',
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'var(--text-primary)',
               padding: '0.4rem 0.8rem',
-              borderRadius: 'var(--border-radius-sm)',
               fontSize: '0.8rem',
-              cursor: 'pointer',
               fontWeight: 500,
             }}
           >

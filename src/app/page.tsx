@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import FileDropzone from '@/components/FileDropzone';
 import AnalysisTabs from '@/components/AnalysisTabs';
 import QAInterface from '@/components/QAInterface';
@@ -26,6 +26,21 @@ export default function Home() {
   const [provider, setProvider] = useState<'gemini' | 'grok' | 'mock'>('mock');
   const [error, setError] = useState<string | null>(null);
   const [fileDetails, setFileDetails] = useState<{ name: string; size: number; type: string } | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('docusense_theme') as 'light' | 'dark' | null;
+    const initialTheme = savedTheme || 'light';
+    setTheme(initialTheme);
+    document.documentElement.setAttribute('data-theme', initialTheme);
+  }, []);
+
+  const toggleTheme = () => {
+    const nextTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(nextTheme);
+    document.documentElement.setAttribute('data-theme', nextTheme);
+    localStorage.setItem('docusense_theme', nextTheme);
+  };
 
   const handleAnalyze = async () => {
     if (inputMode === 'file' && !selectedFile) return;
@@ -160,9 +175,21 @@ export default function Home() {
           <h1><span>✦</span> DocuSense</h1>
           <p>AI Document Analyzer & Insights Assistant</p>
         </div>
-        <div className={`badge ${provider === 'mock' ? 'badge-mock' : provider === 'grok' ? 'badge-grok' : 'badge-real'}`}>
-          <span className="badge-dot" />
-          {provider === 'mock' ? 'Demo Mode (Mock AI)' : provider === 'grok' ? 'Production (Grok AI)' : 'Production (Gemini AI)'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div className={`badge ${provider === 'mock' ? 'badge-mock' : provider === 'grok' ? 'badge-grok' : 'badge-real'}`}>
+            <span className="badge-dot" />
+            {provider === 'mock' ? 'Demo Mode (Mock AI)' : provider === 'grok' ? 'Production (Grok AI)' : 'Production (Gemini AI)'}
+          </div>
+          <button
+            type="button"
+            className="theme-toggle-btn"
+            onClick={toggleTheme}
+            title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+            aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+          >
+            <span className="theme-toggle-icon">{theme === 'light' ? '🌙' : '☀️'}</span>
+            <span>{theme === 'light' ? 'Dark Mode' : 'Light Mode'}</span>
+          </button>
         </div>
       </header>
 
@@ -174,13 +201,13 @@ export default function Home() {
             <h2 className="card-title">Select Document Source</h2>
             
             {/* Input Toggle */}
-            <div style={{ display: 'flex', gap: '0.5rem', background: 'rgba(0,0,0,0.2)', padding: '0.25rem', borderRadius: 'var(--border-radius-sm)', marginBottom: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', background: 'var(--input-toggle-bg)', padding: '0.25rem', borderRadius: 'var(--border-radius-sm)', marginBottom: '0.5rem', border: '1px solid var(--panel-border)' }}>
               <button
                 type="button"
                 style={{
                   flex: 1,
                   background: inputMode === 'file' ? 'var(--accent-gradient)' : 'none',
-                  color: inputMode === 'file' ? '#080c14' : 'var(--text-secondary)',
+                  color: inputMode === 'file' ? 'var(--accent-btn-text)' : 'var(--text-secondary)',
                   border: 'none',
                   padding: '0.5rem',
                   borderRadius: '4px',
@@ -198,7 +225,7 @@ export default function Home() {
                 style={{
                   flex: 1,
                   background: inputMode === 'text' ? 'var(--accent-gradient)' : 'none',
-                  color: inputMode === 'text' ? '#080c14' : 'var(--text-secondary)',
+                  color: inputMode === 'text' ? 'var(--accent-btn-text)' : 'var(--text-secondary)',
                   border: 'none',
                   padding: '0.5rem',
                   borderRadius: '4px',
@@ -254,16 +281,7 @@ export default function Home() {
               {(selectedFile || rawText.trim() || hasAnalyzedData) && (
                 <button
                   type="button"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    color: 'var(--text-primary)',
-                    padding: '0.75rem 1.25rem',
-                    borderRadius: 'var(--border-radius-md)',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    transition: 'var(--transition-smooth)'
-                  }}
+                  className="secondary-btn"
                   onClick={handleClear}
                 >
                   Clear
@@ -335,16 +353,8 @@ export default function Home() {
                         <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Raw Extracted Characters: {documentText.length}</span>
                         <button
                           type="button"
-                          style={{
-                            background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.08)',
-                            color: 'var(--text-secondary)',
-                            padding: '0.3rem 0.6rem',
-                            borderRadius: '4px',
-                            fontSize: '0.75rem',
-                            cursor: 'pointer',
-                            transition: 'var(--transition-smooth)'
-                          }}
+                          className="secondary-btn"
+                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
                           onClick={() => {
                             navigator.clipboard.writeText(documentText);
                             alert('Copied raw document text to clipboard!');
@@ -354,7 +364,7 @@ export default function Home() {
                         </button>
                       </div>
                       <pre style={{
-                        background: 'rgba(0,0,0,0.3)',
+                        background: 'var(--pre-bg)',
                         padding: '1rem',
                         borderRadius: 'var(--border-radius-md)',
                         color: 'var(--text-secondary)',
@@ -363,7 +373,7 @@ export default function Home() {
                         whiteSpace: 'pre-wrap',
                         maxHeight: '400px',
                         overflowY: 'auto',
-                        border: '1px solid rgba(255,255,255,0.03)'
+                        border: '1px solid var(--panel-border)'
                       }}>
                         {documentText}
                       </pre>
