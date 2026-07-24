@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pdf from 'pdf-parse';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Simple check for API key
@@ -10,6 +9,7 @@ const getApiKey = () => {
 // Helper to parse PDF text on the server
 async function extractTextFromPdf(buffer: Buffer): Promise<string> {
   try {
+    const { default: pdf } = await import('pdf-parse');
     const data = await pdf(buffer);
     return data.text || '';
   } catch (error) {
