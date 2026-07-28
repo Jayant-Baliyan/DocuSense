@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DocuSense — AI-Powered Document Analyzer
 
-## Getting Started
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-16.16.104.64-blue)](http://16.16.104.64)
+![Next.js](https://img.shields.io/badge/Next.js-14-black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
+![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED)
+![AWS](https://img.shields.io/badge/AWS-App%20Runner-FF9900)
 
-First, run the development server:
+A full-stack AI document Q&A platform that lets users upload PDFs and ask questions in natural language, with answers streamed progressively in real time.
+
+🔗 **Live Demo:** [http://16.16.104.64](http://16.16.104.64)
+
+---
+
+## ✨ Features
+
+- 📄 **PDF Upload & Parsing** — Extract and chunk text server-side
+- 💬 **Streaming Q&A** — Real-time SSE responses for instant feedback
+- 🧠 **Dual LLM Support** — Google Gemini (primary) + Grok/xAI (failover)
+- 🔐 **Secure API Proxy** — LLM keys never exposed to the client
+- 🐳 **Dockerized** — Single-container full-stack deployment
+- ☁️ **AWS App Runner** — Public HTTPS endpoint from one build pipeline
+
+---
+
+## 🏗️ Architecture
+
+![Architecture](architecture.svg)
+
+### Data Flow
+1. **Upload** → Next.js frontend sends PDF to Express backend (`POST /upload`)
+2. **Parse** → Server extracts and chunks text via PDF parser
+3. **Ask** → User question + context forwarded to LLM proxy
+4. **Failover** → Gemini primary; auto-switch to Grok/xAI on error
+5. **Stream** → SSE chunks flow back to frontend progressively
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Tech |
+|-------|------|
+| Frontend | Next.js 14, TypeScript, TailwindCSS |
+| Backend | Node.js, Express, TypeScript |
+| AI/ML | Google Gemini API, Grok/xAI API |
+| Security | Helmet, CORS, Zod validation |
+| DevOps | Docker, AWS App Runner |
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+# Clone
+git clone https://github.com/Jayant-Baliyan/DocuSense.git
+cd DocuSense
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Run with Docker
+docker build -t docusense .
+docker run -p 3000:3000 docusense
