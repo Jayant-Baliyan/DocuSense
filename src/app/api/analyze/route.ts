@@ -134,6 +134,39 @@ function cleanJsonResponse(text: string): string {
   return cleaned;
 }
 
+async function callGemini(prompt: string, apiKey: string): Promise<string> {
+  const ai = new GoogleGenerativeAI(apiKey);
+  const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+  const model = ai.getGenerativeModel({ model: geminiModel });
+  const result = await model.generateContent({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }]
+  });
+  return result.response.text();
+}
+
+async function callGroq(prompt: string, apiKey: string): Promise<string> {
+  const groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: groqModel,
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq API error (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -163,22 +196,20 @@ export async function POST(req: NextRequest) {
     }
 
     const geminiKey = process.env.GEMINI_API_KEY || '';
-    const xaiKey = process.env.XAI_API_KEY || '';
+    const groqKey = process.env.GROQ_API_KEY || '';
 
-    // Determine provider
-    let provider: 'gemini' | 'grok' | 'mock' = 'mock';
-    if (process.env.AI_PROVIDER === 'grok' && xaiKey) {
-      provider = 'grok';
-    } else if (process.env.AI_PROVIDER === 'gemini' && geminiKey) {
-      provider = 'gemini';
-    } else if (xaiKey) {
-      provider = 'grok';
-    } else if (geminiKey) {
-      provider = 'gemini';
-    }
+    // Determine provider priority sequence
+    const providersToTry: Array<{ name: 'gemini' | 'groq'; key: string }> = [];
+    const mainPref = (process.env.AI_PROVIDER || '').toLowerCase();
+
+    if (mainPref === 'groq' && groqKey) providersToTry.push({ name: 'groq', key: groqKey });
+    else if (mainPref === 'gemini' && geminiKey) providersToTry.push({ name: 'gemini', key: geminiKey });
+
+    if (geminiKey && !providersToTry.some(p => p.name === 'gemini')) providersToTry.push({ name: 'gemini', key: geminiKey });
+    if (groqKey && !providersToTry.some(p => p.name === 'groq')) providersToTry.push({ name: 'groq', key: groqKey });
 
     // 2. If no API Key is available, return mock analysis response
-    if (provider === 'mock') {
+    if (providersToTry.length === 0) {
       const mockResult = generateMockResponse(text, action, question);
       return NextResponse.json({
         ...mockResult,
@@ -187,11 +218,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    let responseText = '';
-
-    if (provider === 'grok') {
-      const prompt = action === 'qa'
-        ? `You are an AI document assistant. You have access to the following document text:
+    const prompt = action === 'qa'
+      ? `You are an AI document assistant. You have access to the following document text:
 ---
 ${text.substring(0, 45000)}
 ---
@@ -199,7 +227,7 @@ Using ONLY the context provided above, answer the user's question. If the answer
 
 Question: ${question}
 Answer:`
-        : `You are a professional document analyst. You are given the following document text:
+      : `You are a professional document analyst. You are given the following document text:
 ---
 ${text.substring(0, 45000)}
 ---
@@ -216,78 +244,34 @@ Format your ENTIRE response as a valid JSON object matching the following struct
   ]
 }`;
 
-      const grokModel = process.env.GROK_MODEL || 'grok-4.5';
-      const response = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${xaiKey}`
-        },
-        body: JSON.stringify({
-          model: grokModel,
-          messages: [
-            { role: "user", content: prompt }
-          ]
-        })
-      });
+    let responseText = '';
+    let usedProvider: 'gemini' | 'groq' | '' = '';
+    let lastError: any = null;
 
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Grok API error (${response.status}): ${errText}`);
+    for (const p of providersToTry) {
+      try {
+        if (p.name === 'gemini') {
+          responseText = await callGemini(prompt, p.key);
+        } else if (p.name === 'groq') {
+          responseText = await callGroq(prompt, p.key);
+        }
+        usedProvider = p.name;
+        break;
+      } catch (err) {
+        console.warn(`AI Provider '${p.name}' failed in Next API:`, err);
+        lastError = err;
       }
+    }
 
-      const data = await response.json();
-      responseText = data.choices?.[0]?.message?.content || '';
-    } else {
-      // Use real Gemini SDK
-      const ai = new GoogleGenerativeAI(geminiKey);
-      const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-      const model = ai.getGenerativeModel({ model: geminiModel });
-
-      if (action === 'qa') {
-        const prompt = `You are an AI document assistant. You have access to the following document text:
----
-${text.substring(0, 45000)}
----
-Using ONLY the context provided above, answer the user's question. If the answer cannot be found or inferred from the document text, politely state that you cannot find the answer in the document.
-
-Question: ${question}
-Answer:`;
-
-        const result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }]
-        });
-        responseText = result.response.text();
-      } else {
-        const prompt = `You are a professional document analyst. You are given the following document text:
----
-${text.substring(0, 45000)}
----
-Perform two tasks:
-1. Provide an executive summary of the document in markdown format. Use sections like "Executive Summary" and "Core Themes", and include bullet points or quotes where appropriate.
-2. Extract 4 to 6 key insights from the document. Format the response as a JSON array of insights with the keys "tag" (e.g. "Scope", "Metrics", "Requirement"), "title" (short title), and "desc" (1-2 sentences description).
-
-Format your ENTIRE response as a valid JSON object matching the following structure exactly (do not output anything outside this JSON structure, do not include markdown code block tags around the JSON):
-{
-  "summary": "markdown_formatted_summary_here",
-  "insights": [
-    { "tag": "TAG1", "title": "TITLE1", "desc": "DESC1" },
-    ...
-  ]
-}`;
-
-        const result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }]
-        });
-        responseText = result.response.text();
-      }
+    if (!usedProvider) {
+      throw lastError || new Error('All AI providers failed');
     }
 
     if (action === 'qa') {
       return NextResponse.json({
         answer: responseText,
         isMock: false,
-        provider
+        provider: usedProvider
       });
     } else {
       const cleanedResponse = cleanJsonResponse(responseText);
@@ -296,24 +280,17 @@ Format your ENTIRE response as a valid JSON object matching the following struct
         summary: parsedData.summary,
         insights: parsedData.insights,
         isMock: false,
-        provider,
+        provider: usedProvider,
         text: text // Send back parsed text on initial load
       });
     }
 
   } catch (error: any) {
     console.error('API Route Error:', error);
-    // Determine provider fallback
-    const geminiKey = process.env.GEMINI_API_KEY || '';
-    const xaiKey = process.env.XAI_API_KEY || '';
-    let provider: 'gemini' | 'grok' | 'mock' = 'mock';
-    if (xaiKey) provider = 'grok';
-    else if (geminiKey) provider = 'gemini';
-
     return NextResponse.json({ 
       error: error.message || 'An error occurred during analysis.',
       isMock: true,
-      provider,
+      provider: 'mock',
       // fallback in case of API failure
       summary: '### Error Analysis\nAn error occurred while calling the AI API. Standard mockup fallback loaded.',
       insights: [

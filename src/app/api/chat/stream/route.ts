@@ -1,6 +1,86 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+async function getOpenAICompatibleStream(endpoint: string, apiKey: string, modelName: string, prompt: string): Promise<ReadableStream<Uint8Array>> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: [{ role: "user", content: prompt }],
+      stream: true
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`API error (${response.status}): ${errText}`);
+  }
+
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      const reader = response.body?.getReader();
+      if (!reader) {
+        controller.close();
+        return;
+      }
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const cleanedLine = line.trim();
+          if (!cleanedLine || cleanedLine === 'data: [DONE]') continue;
+          if (cleanedLine.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(cleanedLine.substring(6));
+              const delta = json.choices?.[0]?.delta?.content || '';
+              if (delta) {
+                controller.enqueue(encoder.encode(delta));
+              }
+            } catch (e) {
+              // Ignore partial JSON parse errors
+            }
+          }
+        }
+      }
+      controller.close();
+    }
+  });
+}
+
+async function getGeminiStream(apiKey: string, prompt: string): Promise<ReadableStream<Uint8Array>> {
+  const ai = new GoogleGenerativeAI(apiKey);
+  const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+  const model = ai.getGenerativeModel({ model: geminiModel });
+  const resultStream = await model.generateContentStream({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }]
+  });
+
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      for await (const chunk of resultStream.stream) {
+        const chunkText = chunk.text();
+        if (chunkText) {
+          controller.enqueue(encoder.encode(chunkText));
+        }
+      }
+      controller.close();
+    }
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -11,21 +91,19 @@ export async function POST(req: NextRequest) {
     }
 
     const geminiKey = process.env.GEMINI_API_KEY || '';
-    const xaiKey = process.env.XAI_API_KEY || '';
+    const groqKey = process.env.GROQ_API_KEY || '';
 
-    // Determine provider
-    let provider: 'gemini' | 'grok' | 'mock' = 'mock';
-    if (process.env.AI_PROVIDER === 'grok' && xaiKey) {
-      provider = 'grok';
-    } else if (process.env.AI_PROVIDER === 'gemini' && geminiKey) {
-      provider = 'gemini';
-    } else if (xaiKey) {
-      provider = 'grok';
-    } else if (geminiKey) {
-      provider = 'gemini';
-    }
+    // Determine provider priority sequence
+    const providersToTry: Array<{ name: 'gemini' | 'groq'; key: string }> = [];
+    const mainPref = (process.env.AI_PROVIDER || '').toLowerCase();
 
-    if (provider === 'mock') {
+    if (mainPref === 'groq' && groqKey) providersToTry.push({ name: 'groq', key: groqKey });
+    else if (mainPref === 'gemini' && geminiKey) providersToTry.push({ name: 'gemini', key: geminiKey });
+
+    if (geminiKey && !providersToTry.some(p => p.name === 'gemini')) providersToTry.push({ name: 'gemini', key: geminiKey });
+    if (groqKey && !providersToTry.some(p => p.name === 'groq')) providersToTry.push({ name: 'groq', key: groqKey });
+
+    if (providersToTry.length === 0) {
       const cleanText = text.trim();
       const titleMatch = cleanText.split('\n')[0] || 'Document';
       const docTitle = titleMatch.length > 60 ? titleMatch.substring(0, 57) + '...' : titleMatch;
@@ -76,93 +154,31 @@ Using ONLY the context provided above, answer the user's question. If the answer
 Question: ${question}
 Answer:`;
 
-    const encoder = new TextEncoder();
+    let activeStream: ReadableStream<Uint8Array> | null = null;
+    let lastError: any = null;
 
-    if (provider === 'grok') {
-      const grokModel = process.env.GROK_MODEL || 'grok-4.5';
-      const grokRes = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${xaiKey}`
-        },
-        body: JSON.stringify({
-          model: grokModel,
-          messages: [{ role: "user", content: prompt }],
-          stream: true
-        })
-      });
-
-      if (!grokRes.ok) {
-        const errText = await grokRes.text();
-        throw new Error(`Grok API error (${grokRes.status}): ${errText}`);
+    for (const p of providersToTry) {
+      try {
+        if (p.name === 'gemini') {
+          activeStream = await getGeminiStream(p.key, prompt);
+        } else if (p.name === 'groq') {
+          const groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+          activeStream = await getOpenAICompatibleStream("https://api.groq.com/openai/v1/chat/completions", p.key, groqModel, prompt);
+        }
+        if (activeStream) break;
+      } catch (err) {
+        console.warn(`Provider '${p.name}' failed to create stream:`, err);
+        lastError = err;
       }
-
-      const stream = new ReadableStream({
-        async start(controller) {
-          const reader = grokRes.body?.getReader();
-          if (!reader) {
-            controller.close();
-            return;
-          }
-          const decoder = new TextDecoder();
-          let buffer = '';
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              const cleanedLine = line.trim();
-              if (!cleanedLine || cleanedLine === 'data: [DONE]') continue;
-              if (cleanedLine.startsWith('data: ')) {
-                try {
-                  const json = JSON.parse(cleanedLine.substring(6));
-                  const delta = json.choices?.[0]?.delta?.content || '';
-                  if (delta) {
-                    controller.enqueue(encoder.encode(delta));
-                  }
-                } catch (e) {
-                  // Ignore JSON parse errors for partial chunks
-                }
-              }
-            }
-          }
-          controller.close();
-        }
-      });
-
-      return new Response(stream, {
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-      });
-    } else {
-      // Gemini streaming
-      const ai = new GoogleGenerativeAI(geminiKey);
-      const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-      const model = ai.getGenerativeModel({ model: geminiModel });
-      const resultStream = await model.generateContentStream({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-      });
-
-      const stream = new ReadableStream({
-        async start(controller) {
-          for await (const chunk of resultStream.stream) {
-            const chunkText = chunk.text();
-            if (chunkText) {
-              controller.enqueue(encoder.encode(chunkText));
-            }
-          }
-          controller.close();
-        }
-      });
-
-      return new Response(stream, {
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-      });
     }
+
+    if (!activeStream) {
+      throw lastError || new Error('All AI streaming providers failed');
+    }
+
+    return new Response(activeStream, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+    });
 
   } catch (error: any) {
     console.error('Chat stream error:', error);

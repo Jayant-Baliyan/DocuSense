@@ -23,7 +23,7 @@ export default function Home() {
   const [insights, setInsights] = useState<InsightItem[]>([]);
   const [documentText, setDocumentText] = useState('');
   const [isMock, setIsMock] = useState(true);
-  const [provider, setProvider] = useState<'gemini' | 'grok' | 'mock'>('mock');
+  const [provider, setProvider] = useState<'gemini' | 'groq' | 'mock'>('mock');
   const [error, setError] = useState<string | null>(null);
   const [fileDetails, setFileDetails] = useState<{ name: string; size: number; type: string } | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -176,9 +176,9 @@ export default function Home() {
           <p>AI Document Analyzer & Insights Assistant</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div className={`badge ${provider === 'mock' ? 'badge-mock' : provider === 'grok' ? 'badge-grok' : 'badge-real'}`}>
+          <div className={`badge ${provider === 'mock' ? 'badge-mock' : provider === 'groq' ? 'badge-groq' : 'badge-real'}`}>
             <span className="badge-dot" />
-            {provider === 'mock' ? 'Demo Mode (Mock AI)' : provider === 'grok' ? 'Production (Grok AI)' : 'Production (Gemini AI)'}
+            {provider === 'mock' ? 'Demo Mode (Mock AI)' : provider === 'groq' ? 'Production (Groq AI)' : 'Production (Gemini AI)'}
           </div>
           <button
             type="button"

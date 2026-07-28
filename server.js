@@ -50,7 +50,7 @@ ${coreHighlights.map(h => `* ${h}.`).join('\n')}
 2. **Key Parameters**: Addresses operational or technical constraints.
 3. **Synthesis & Outlook**: Provides conclusions and proposed actions.
 
-> **Note**: This analysis was generated in *Demo Mock Mode*. Once an API key is provided, this tool will generate deep contextual summaries and insights powered by Gemini or Grok.`;
+> **Note**: This analysis was generated in *Demo Mock Mode*. Once an API key is provided, this tool will generate deep contextual summaries and insights powered by Gemini or Groq.`;
 
   return {
     summary: summaryMarkdown,
@@ -68,6 +68,100 @@ function cleanJsonResponse(text) {
     cleaned = lines.join('\n').trim();
   }
   return cleaned;
+}
+
+async function callGemini(prompt, apiKey) {
+  const ai = new GoogleGenerativeAI(apiKey);
+  const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+  const model = ai.getGenerativeModel({ model: geminiModel });
+  const result = await model.generateContent({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }]
+  });
+  return result.response.text();
+}
+
+async function callGroq(prompt, apiKey) {
+  const groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: groqModel,
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq API error (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function streamGemini(prompt, apiKey, res) {
+  const ai = new GoogleGenerativeAI(apiKey);
+  const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+  const model = ai.getGenerativeModel({ model: geminiModel });
+  const resultStream = await model.generateContentStream({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }]
+  });
+
+  for await (const chunk of resultStream.stream) {
+    res.write(chunk.text());
+  }
+}
+
+async function streamOpenAICompatible(prompt, apiKey, endpoint, modelName, res) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: [{ role: "user", content: prompt }],
+      stream: true
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`API error (${response.status}): ${errText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // Keep partial line
+
+    for (const line of lines) {
+      const cleanedLine = line.trim();
+      if (!cleanedLine || cleanedLine === 'data: [DONE]') continue;
+      if (cleanedLine.startsWith('data: ')) {
+        try {
+          const json = JSON.parse(cleanedLine.substring(6));
+          const delta = json.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            res.write(delta);
+          }
+        } catch (e) {
+          // Ignore partial JSON parse errors
+        }
+      }
+    }
+  }
 }
 
 // Endpoint to analyze PDF/TXT files or raw text input
@@ -92,21 +186,19 @@ app.post('/api/analyze', upload.single('file'), async (req, res) => {
     }
 
     const geminiKey = process.env.GEMINI_API_KEY || '';
-    const xaiKey = process.env.XAI_API_KEY || '';
+    const groqKey = process.env.GROQ_API_KEY || '';
 
-    // Determine provider
-    let provider = 'mock';
-    if (process.env.AI_PROVIDER === 'grok' && xaiKey) {
-      provider = 'grok';
-    } else if (process.env.AI_PROVIDER === 'gemini' && geminiKey) {
-      provider = 'gemini';
-    } else if (xaiKey) {
-      provider = 'grok';
-    } else if (geminiKey) {
-      provider = 'gemini';
-    }
+    // Determine provider priority sequence
+    const providersToTry = [];
+    const mainPref = (process.env.AI_PROVIDER || '').toLowerCase();
 
-    if (provider === 'mock') {
+    if (mainPref === 'groq' && groqKey) providersToTry.push({ name: 'groq', key: groqKey });
+    else if (mainPref === 'gemini' && geminiKey) providersToTry.push({ name: 'gemini', key: geminiKey });
+
+    if (geminiKey && !providersToTry.some(p => p.name === 'gemini')) providersToTry.push({ name: 'gemini', key: geminiKey });
+    if (groqKey && !providersToTry.some(p => p.name === 'groq')) providersToTry.push({ name: 'groq', key: groqKey });
+
+    if (providersToTry.length === 0) {
       const mockResult = generateMockAnalysis(text);
       return res.json({
         ...mockResult,
@@ -133,39 +225,26 @@ Format your ENTIRE response as a valid JSON object matching the following struct
 }`;
 
     let responseText = '';
+    let usedProvider = '';
+    let lastError = null;
 
-    if (provider === 'grok') {
-      const grokModel = process.env.GROK_MODEL || 'grok-4.5';
-      const response = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${xaiKey}`
-        },
-        body: JSON.stringify({
-          model: grokModel,
-          messages: [
-            { role: "user", content: prompt }
-          ]
-        })
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Grok API error (${response.status}): ${errText}`);
+    for (const p of providersToTry) {
+      try {
+        if (p.name === 'gemini') {
+          responseText = await callGemini(prompt, p.key);
+        } else if (p.name === 'groq') {
+          responseText = await callGroq(prompt, p.key);
+        }
+        usedProvider = p.name;
+        break;
+      } catch (err) {
+        console.warn(`AI Provider '${p.name}' failed during analysis:`, err.message || err);
+        lastError = err;
       }
+    }
 
-      const data = await response.json();
-      responseText = data.choices?.[0]?.message?.content || '';
-    } else {
-      // Use Gemini
-      const ai = new GoogleGenerativeAI(geminiKey);
-      const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-      const model = ai.getGenerativeModel({ model: geminiModel });
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-      });
-      responseText = result.response.text();
+    if (!usedProvider) {
+      throw lastError || new Error('All AI providers failed');
     }
 
     const cleanedResponse = cleanJsonResponse(responseText);
@@ -175,7 +254,7 @@ Format your ENTIRE response as a valid JSON object matching the following struct
       summary: parsedData.summary,
       insights: parsedData.insights,
       isMock: false,
-      provider: provider,
+      provider: usedProvider,
       text: text
     });
 
@@ -204,21 +283,19 @@ app.post('/api/chat/stream', async (req, res) => {
   res.setHeader('Transfer-Encoding', 'chunked');
 
   const geminiKey = process.env.GEMINI_API_KEY || '';
-  const xaiKey = process.env.XAI_API_KEY || '';
+  const groqKey = process.env.GROQ_API_KEY || '';
 
-  // Determine provider
-  let provider = 'mock';
-  if (process.env.AI_PROVIDER === 'grok' && xaiKey) {
-    provider = 'grok';
-  } else if (process.env.AI_PROVIDER === 'gemini' && geminiKey) {
-    provider = 'gemini';
-  } else if (xaiKey) {
-    provider = 'grok';
-  } else if (geminiKey) {
-    provider = 'gemini';
-  }
+  // Determine provider priority sequence
+  const providersToTry = [];
+  const mainPref = (process.env.AI_PROVIDER || '').toLowerCase();
 
-  if (provider === 'mock') {
+  if (mainPref === 'groq' && groqKey) providersToTry.push({ name: 'groq', key: groqKey });
+  else if (mainPref === 'gemini' && geminiKey) providersToTry.push({ name: 'gemini', key: geminiKey });
+
+  if (geminiKey && !providersToTry.some(p => p.name === 'gemini')) providersToTry.push({ name: 'gemini', key: geminiKey });
+  if (groqKey && !providersToTry.some(p => p.name === 'groq')) providersToTry.push({ name: 'groq', key: groqKey });
+
+  if (providersToTry.length === 0) {
     // Stream Mock Answer
     const cleanText = text.trim();
     const titleMatch = cleanText.split('\n')[0] || 'Document';
@@ -257,83 +334,26 @@ Using ONLY the context provided above, answer the user's question. If the answer
 Question: ${question}
 Answer:`;
 
-  if (provider === 'grok') {
+  let streamSuccess = false;
+  for (const p of providersToTry) {
     try {
-      const grokModel = process.env.GROK_MODEL || 'grok-4.5';
-      const response = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${xaiKey}`
-        },
-        body: JSON.stringify({
-          model: grokModel,
-          messages: [
-            { role: "user", content: prompt }
-          ],
-          stream: true
-        })
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Grok API error (${response.status}): ${errText}`);
+      if (p.name === 'gemini') {
+        await streamGemini(prompt, p.key, res);
+      } else if (p.name === 'groq') {
+        const groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+        await streamOpenAICompatible(prompt, p.key, "https://api.groq.com/openai/v1/chat/completions", groqModel, res);
       }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // Keep partial line
-
-        for (const line of lines) {
-          const cleanedLine = line.trim();
-          if (!cleanedLine) continue;
-          if (cleanedLine === 'data: [DONE]') continue;
-          if (cleanedLine.startsWith('data: ')) {
-            try {
-              const json = JSON.parse(cleanedLine.substring(6));
-              const delta = json.choices?.[0]?.delta?.content || '';
-              if (delta) {
-                res.write(delta);
-              }
-            } catch (e) {
-              // Ignore partial JSON parse errors
-            }
-          }
-        }
-      }
-      res.end();
+      streamSuccess = true;
+      break;
     } catch (error) {
-      console.error('Grok streaming error:', error);
-      res.write(`\n⚠️ Error during Grok streaming: ${error.message || 'Connection lost'}`);
-      res.end();
-    }
-  } else {
-    // Gemini Stream
-    try {
-      const ai = new GoogleGenerativeAI(geminiKey);
-      const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-      const model = ai.getGenerativeModel({ model: geminiModel });
-      const resultStream = await model.generateContentStream({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-      });
-
-      for await (const chunk of resultStream.stream) {
-        res.write(chunk.text());
-      }
-      res.end();
-    } catch (error) {
-      console.error('Gemini streaming error:', error);
-      res.write(`\n⚠️ Error during Gemini streaming: ${error.message || 'Connection lost'}`);
-      res.end();
+      console.warn(`Provider '${p.name}' streaming failed:`, error.message || error);
     }
   }
+
+  if (!streamSuccess) {
+    res.write(`\n⚠️ Error during AI streaming across all configured providers.`);
+  }
+  res.end();
 });
 
 app.listen(port, () => {

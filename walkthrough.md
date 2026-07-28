@@ -1,6 +1,6 @@
 # Walkthrough: DocuSense Full-Stack Dockerization & Streaming
 
-We have completed the transition of **DocuSense** into a containerized full-stack application featuring progressive Q&A streaming (supporting both Gemini and Grok) and a secure Node.js Express backend.
+We have completed the transition of **DocuSense** into a containerized full-stack application featuring progressive Q&A streaming (supporting both Gemini and Groq) and a secure Node.js Express backend.
 
 ---
 
@@ -12,9 +12,9 @@ We have completed the transition of **DocuSense** into a containerized full-stac
 * Handled the multi-part upload endpoint `/api/analyze`.
 * Designed `/api/chat/stream` to stream answers progressively.
 
-### 2. Dual Gemini & Grok Streaming Support
-* Automatically detects the presence of `GEMINI_API_KEY` and `XAI_API_KEY` to pick the correct model.
-* Integrates standard xAI/Grok SSE chunk-by-chunk stream parsing and converts it to raw text chunks for the client.
+### 2. Dual Gemini & Groq Streaming Support & Automatic Failover
+* Automatically detects the presence of `GEMINI_API_KEY` and `GROQ_API_KEY` to choose the active model and execute automatic failover if primary fails.
+* Integrates standard Groq OpenAI-compatible SSE chunk-by-chunk stream parsing (`llama-3.3-70b-versatile`) and converts it to raw text chunks for the client.
 * Simulates typed stream delivery in Mock/Demo mode so users can verify responsiveness without requiring API keys.
 
 ### 3. Frontend Stream Parsing (`src/components/QAInterface.tsx`)
@@ -44,7 +44,7 @@ Open `http://localhost:3000` to test both file analysis and streaming chats.
 Build and run the Docker image:
 ```bash
 docker build -t docusense .
-docker run -p 3000:3000 --env GEMINI_API_KEY=your_key_here --env XAI_API_KEY=your_grok_key_here docusense
+docker run -p 3000:3000 --env GEMINI_API_KEY=your_key_here --env GROQ_API_KEY=your_groq_key_here docusense
 ```
 
 ### 3. AWS App Runner Deployment
@@ -52,5 +52,5 @@ docker run -p 3000:3000 --env GEMINI_API_KEY=your_key_here --env XAI_API_KEY=you
 2. Navigate to **AWS App Runner** in the AWS console and click **Create Service**.
 3. Link your GitHub repository and select the **Docker** runtime option (App Runner will automatically detect and execute the `Dockerfile`).
 4. Under **Configuration > Environment Variables**, define:
-   * `GEMINI_API_KEY` (and/or `XAI_API_KEY` / `AI_PROVIDER`)
+   * `GEMINI_API_KEY` (and/or `GROQ_API_KEY` / `AI_PROVIDER`)
 5. Deploy. App Runner will deploy your container, map port 3000, attach a SSL certificate, and give you a public HTTPS endpoint.

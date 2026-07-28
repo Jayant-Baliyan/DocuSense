@@ -16,22 +16,75 @@ A full-stack AI document Q&A platform that lets users upload PDFs and ask questi
 
 - 📄 **PDF Upload & Parsing** — Extract and chunk text server-side
 - 💬 **Streaming Q&A** — Real-time SSE responses for instant feedback
-- 🧠 **Dual LLM Support** — Google Gemini (primary) + Grok/xAI (failover)
+- 🧠 **Dual LLM Support** — Google Gemini (primary) + Groq API (failover)
 - 🔐 **Secure API Proxy** — LLM keys never exposed to the client
 - 🐳 **Dockerized** — Single-container full-stack deployment
-- ☁️ **AWS App Runner** — Public HTTPS endpoint from one build pipeline
+- ☁️ **AWS App Runner** — Public endpoint from one build pipeline
 
 ---
 
 ## 🏗️ Architecture
 
-![Architecture](architecture.svg)
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+graph TB
+    subgraph AWS["☁️ AWS App Runner"]
+        subgraph Docker["🐳 Docker Container"]
+            subgraph Client["🎨 Next.js Frontend"]
+                UI["📄 PDF Upload UI"]
+                Chat["💬 Streaming Chat"]
+            end
+
+            subgraph Server["⚙️ Express Backend"]
+                Proxy["🔐 API Proxy Layer"]
+                Parser["📖 PDF Text Parser"]
+                Failover["⚡ Failover Controller"]
+                SSE["📤 SSE Stream Handler"]
+                Security["🛡️ Helmet + CORS"]
+                Zod["📝 Zod Validation"]
+            end
+        end
+    end
+
+    subgraph LLM["🧠 LLM Providers"]
+        Gemini["🧠 Google Gemini API — Primary"]
+        Groq["⚡ Groq API — Failover"]
+    end
+
+    User["👤 User"] --&gt; UI
+    User --&gt; Chat
+
+    UI --&gt;|POST /upload| Parser
+    Chat --&gt;|POST /ask| Zod
+    Zod --&gt; Proxy
+    Proxy --&gt;|Primary call| Gemini
+    Proxy -.-&gt;|Failover| Groq
+    Parser --&gt;|Context| Proxy
+
+    Gemini --&gt;|Stream chunks| SSE
+    Groq --&gt;|Stream chunks| SSE
+    SSE --&gt;|SSE stream| Chat
+
+    Security -.-&gt;|Protects| Proxy
+    Security -.-&gt;|Protects| Parser
+    Security -.-&gt;|Protects| SSE
+
+    classDef client fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#e2e8f0
+    classDef server fill:#0f172a,stroke:#6366f1,stroke-width:2px,color:#e2e8f0
+    classDef llm fill:#1a1205,stroke:#f59e0b,stroke-width:2px,color:#e2e8f0
+    classDef user fill:#1e293b,stroke:#22c55e,stroke-width:2px,color:#e2e8f0
+
+    class UI,Chat client
+    class Proxy,Parser,Failover,SSE,Security,Zod server
+    class Gemini,Groq llm
+    class User user
+
 
 ### Data Flow
 1. **Upload** → Next.js frontend sends PDF to Express backend (`POST /upload`)
 2. **Parse** → Server extracts and chunks text via PDF parser
 3. **Ask** → User question + context forwarded to LLM proxy
-4. **Failover** → Gemini primary; auto-switch to Grok/xAI on error
+4. **Failover** → Gemini primary; auto-switch to Groq on error
 5. **Stream** → SSE chunks flow back to frontend progressively
 
 ---
@@ -42,7 +95,7 @@ A full-stack AI document Q&A platform that lets users upload PDFs and ask questi
 |-------|------|
 | Frontend | Next.js 14, TypeScript, TailwindCSS |
 | Backend | Node.js, Express, TypeScript |
-| AI/ML | Google Gemini API, Grok/xAI API |
+| AI/ML | Google Gemini API, Groq API |
 | Security | Helmet, CORS, Zod validation |
 | DevOps | Docker, AWS App Runner |
 
