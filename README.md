@@ -28,46 +28,46 @@ A full-stack AI document Q&A platform that lets users upload PDFs and ask questi
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 graph TB
-    subgraph AWS["☁️ AWS App Runner"]
-        subgraph Docker["🐳 Docker Container"]
-            subgraph Client["🎨 Next.js Frontend"]
-                UI["📄 PDF Upload UI"]
-                Chat["💬 Streaming Chat"]
+    subgraph AWS["AWS App Runner"]
+        subgraph Docker["Docker Container"]
+            subgraph Client["Next.js Frontend"]
+                UI["PDF Upload UI"]
+                Chat["Streaming Chat"]
             end
 
-            subgraph Server["⚙️ Express Backend"]
-                Proxy["🔐 API Proxy Layer"]
-                Parser["📖 PDF Text Parser"]
-                Failover["⚡ Failover Controller"]
-                SSE["📤 SSE Stream Handler"]
-                Security["🛡️ Helmet + CORS"]
-                Zod["📝 Zod Validation"]
+            subgraph Server["Express Backend"]
+                Proxy["API Proxy Layer"]
+                Parser["PDF Text Parser"]
+                Failover["Failover Controller"]
+                SSEHandler["SSE Stream Handler"]
+                Security["Helmet + CORS"]
+                ZodVal["Zod Validation"]
             end
         end
     end
 
-    subgraph LLM["🧠 LLM Providers"]
-        Gemini["🧠 Google Gemini API — Primary"]
-        Groq["⚡ Groq API — Failover"]
+    subgraph LLM["LLM Providers"]
+        Gemini["Google Gemini API<br/>Primary"]
+        Groq["Groq API<br/>Failover"]
     end
 
-    User["👤 User"] --&gt; UI
-    User --&gt; Chat
+    EndUser([User]) --> UI
+    EndUser --> Chat
 
-    UI --&gt;|POST /upload| Parser
-    Chat --&gt;|POST /ask| Zod
-    Zod --&gt; Proxy
-    Proxy --&gt;|Primary call| Gemini
-    Proxy -.-&gt;|Failover| Groq
-    Parser --&gt;|Context| Proxy
+    UI -->|POST /upload| Parser
+    Chat -->|POST /ask| ZodVal
+    ZodVal --> Proxy
+    Proxy -->|Primary call| Gemini
+    Proxy -.->|Failover| Groq
+    Parser -->|Context| Proxy
 
-    Gemini --&gt;|Stream chunks| SSE
-    Groq --&gt;|Stream chunks| SSE
-    SSE --&gt;|SSE stream| Chat
+    Gemini -->|Stream chunks| SSEHandler
+    Groq -->|Stream chunks| SSEHandler
+    SSEHandler -->|SSE stream| Chat
 
-    Security -.-&gt;|Protects| Proxy
-    Security -.-&gt;|Protects| Parser
-    Security -.-&gt;|Protects| SSE
+    Security -.->|Protects| Proxy
+    Security -.->|Protects| Parser
+    Security -.->|Protects| SSEHandler
 
     classDef client fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#e2e8f0
     classDef server fill:#0f172a,stroke:#6366f1,stroke-width:2px,color:#e2e8f0
@@ -75,10 +75,9 @@ graph TB
     classDef user fill:#1e293b,stroke:#22c55e,stroke-width:2px,color:#e2e8f0
 
     class UI,Chat client
-    class Proxy,Parser,Failover,SSE,Security,Zod server
+    class Proxy,Parser,Failover,SSEHandler,Security,ZodVal server
     class Gemini,Groq llm
-    class User user
-
+    class EndUser user
 
 ### Data Flow
 1. **Upload** → Next.js frontend sends PDF to Express backend (`POST /upload`)
