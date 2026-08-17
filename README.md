@@ -25,7 +25,7 @@ A full-stack AI document Q&A platform that lets users upload PDFs and ask questi
 
 ## 🏗️ Architecture
 
-```mermaid
+mermaid
 %%{init: {'theme': 'dark'}}%%
 graph TB
     subgraph AWS["AWS App Runner"]
