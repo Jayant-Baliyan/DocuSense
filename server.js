@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const pdf = require('pdf-parse');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
 const next = require('next');
@@ -21,7 +22,6 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 async function extractTextFromPdf(buffer) {
   try {
-    const { default: pdf } = await import('pdf-parse');
     const data = await pdf(buffer);
     return data.text || '';
   } catch (error) {
