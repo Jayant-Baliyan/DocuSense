@@ -14,13 +14,8 @@ COPY . .
 # Build the Next.js production build
 RUN npm run build
 
-# Expose ports (Next.js default)
-EXPOSE 3000
-
 # Set environment
-ENV PORT=3000
-ENV BACKEND_PORT=3001
 ENV NODE_ENV=production
 
-# Start both next and express server concurrently
-CMD ["npx", "concurrently", "\"node server.js\"", "\"npx next start -p 3000\""]
+# Single process: Express serves Next.js via custom server on process.env.PORT
+CMD ["node", "server.js"]

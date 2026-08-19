@@ -3,11 +3,16 @@ const cors = require('cors');
 const multer = require('multer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
+const next = require('next');
 
 dotenv.config();
 
+const dev = process.env.NODE_ENV !== 'production';
+const nextApp = next({ dev });
+const nextHandle = nextApp.getRequestHandler();
+
 const app = express();
-const port = process.env.BACKEND_PORT || 3001;
+const port = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
@@ -356,6 +361,16 @@ Answer:`;
   res.end();
 });
 
-app.listen(port, () => {
-  console.log(`Backend server running on http://127.0.0.1:${port}`);
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: 'API endpoint not found' });
+});
+
+nextApp.prepare().then(() => {
+  app.all('*', (req, res) => {
+    return nextHandle(req, res);
+  });
+
+  app.listen(port, () => {
+    console.log(`> DocuSense listening on http://localhost:${port}`);
+  });
 });
